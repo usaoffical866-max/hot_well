@@ -1,15 +1,21 @@
-// app.js — HOTWELL Telegram Mini App
-// Main application logic for Play • Collect Points • Win Rewards
+// app.js — HOTWELL Telegram Mini App (backend-integrated)
+// Calls backend endpoints at window.HOTWELL_BACKEND_URL
+// No secrets are stored here.
 
 (function() {
   'use strict';
 
+  // Config: backend URL (set in index.html meta or env during deploy)
+  const BACKEND = window.HOTWELL_BACKEND_URL || location.origin;
+
   // Initialize Telegram Web App
   const tg = window.Telegram?.WebApp;
   if (tg) {
-    tg.ready();
-    tg.expand();
+    try { tg.ready(); tg.expand(); } catch(e){/* ignore */ }
   }
+
+  // Local demo storage key
+  const DEMO_KEY = 'hotwell_demo_v1';
 
   // Application State
   const state = {
@@ -35,298 +41,217 @@
       { id: 3, title: 'Share Story', reward: 25, completed: false, icon: '📢' },
       { id: 4, title: 'Watch Ad', reward: 5, completed: false, icon: '📺' },
     ],
-    leaderboard: [
-      { rank: 1, name: 'TechGuru', score: 5420, emoji: '🥇' },
-      { rank: 2, name: 'GamerPro', score: 4890, emoji: '🥈' },
-      { rank: 3, name: 'StarHunter', score: 4210, emoji: '🥉' },
-      { rank: 4, name: 'YourName', score: 3150, emoji: '4️⃣' },
-      { rank: 5, name: 'NovaKing', score: 2980, emoji: '5️⃣' },
-    ],
+    leaderboard: [],
+    recentResults: []
   };
 
   // DOM Elements
-  const app = document.getElementById('app');
   const page = document.getElementById('page');
   const userShort = document.getElementById('userShort');
   const toast = document.getElementById('toast');
   const navButtons = document.querySelectorAll('.nav-btn');
 
-  // Initialize App
-  function init() {
-    updateUserShort();
-    renderPage('home');
-    attachNavListeners();
+  // Utility: show toast
+  function showToast(message) {
+    if (!toast) return;
+    toast.textContent = message;
+    toast.style.opacity = '1';
+    toast.style.visibility = 'visible';
+    setTimeout(() => { toast.style.opacity = '0'; toast.style.visibility = 'hidden'; }, 2000);
   }
 
-  // Update User Short Display
+  // Render helpers
   function updateUserShort() {
-    const initial = state.user.firstName.charAt(0).toUpperCase();
-    userShort.textContent = initial;
-    userShort.title = state.user.firstName;
+    const initial = (state.user.firstName || 'P')[0].toUpperCase();
+    if (userShort) {
+      userShort.textContent = initial;
+      userShort.title = state.user.firstName || 'Player';
+    }
   }
 
-  // Page Navigation
-  function attachNavListeners() {
+  function updateLeaderboard(list) {
+    state.leaderboard = list || [];
+  }
+
+  function updateRecent(list) {
+    state.recentResults = list || [];
+  }
+
+  // Backend fetch helpers
+  async function fetchJson(path) {
+    const url = `${BACKEND}${path}`;
+    const res = await fetch(url, { credentials: 'same-origin' });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json();
+  }
+
+  // Local demo fallback
+  function loadLocalDemo() {
+    const raw = localStorage.getItem(DEMO_KEY);
+    if (raw) {
+      try {
+        const data = JSON.parse(raw);
+        state.user = Object.assign({}, state.user, data.user || {});
+        updateRecent(data.recent || []);
+        updateLeaderboard(data.leaderboard || []);
+        renderPage(state.currentPage);
+        updateUserShort();
+        showToast('Using local demo');
+        return;
+      } catch (e) {
+        localStorage.removeItem(DEMO_KEY);
+      }
+    }
+    // Seed demo
+    const demo = {
+      user: { firstName: 'Demo', points: 25, coins: 200, level: 1, totalRewards: 0 },
+      recent: [
+        { emoji: '🎲', value: 6, points_awarded: 10, first_name: 'Alice', timestamp: Math.floor(Date.now()/1000) - 60 },
+        { emoji: '🎯', value: 4, points_awarded: 1, first_name: 'Bob', timestamp: Math.floor(Date.now()/1000) - 120 }
+      ],
+      leaderboard: [
+        { first_name: 'Alice', points: 120 },
+        { first_name: 'Bob', points: 80 }
+      ]
+    };
+    localStorage.setItem(DEMO_KEY, JSON.stringify(demo));
+    state.user = Object.assign({}, state.user, demo.user);
+    updateRecent(demo.recent);
+    updateLeaderboard(demo.leaderboard);
+    renderPage(state.currentPage);
+    updateUserShort();
+    showToast('Initialized local demo');
+  }
+
+  // Attempt to initialize from backend, otherwise fallback to local demo
+  async function initializeData() {
+    // Try backend only if tg.initData exists
+    if (!tg || !tg.initData) {
+      setBackendStatus('No Telegram WebApp initData — using demo');
+      loadLocalDemo();
+      return;
+    }
+    setBackendStatus('Connecting to backend...');
+    try {
+      // Try GET /api/me
+      const encoded = encodeURIComponent(tg.initData);
+      const meRes = await fetch(`${BACKEND}/api/me?initData=${encoded}`, { credentials: 'same-origin' });
+      if (!meRes.ok) throw new Error('backend /api/me failed');
+      const meJson = await meRes.json();
+      if (!meJson.ok) throw new Error('backend /api/me returned error');
+      // apply user + other data
+      state.user = Object.assign({}, state.user, meJson.user || {});
+      updateRecent(meJson.recent || []);
+      updateLeaderboard(meJson.leaderboard || []);
+      renderPage(state.currentPage);
+      updateUserShort();
+      setBackendStatus('Connected');
+    } catch (err) {
+      console.warn('Backend /api/me failed:', err);
+      setBackendStatus('Backend unavailable — using demo');
+      loadLocalDemo();
+    }
+  }
+
+  // UI: backend status
+  function setBackendStatus(text) {
+    const el = document.getElementById('toast');
+    if (el) el.textContent = text;
+  }
+
+  // Page rendering (home/games/tasks/leaderboard/profile)
+  function renderPage(pageName) {
+    state.currentPage = pageName;
+    if (!page) return;
+    page.innerHTML = '';
+    switch(pageName) {
+      case 'home': renderHome(); break;
+      case 'games': renderGames(); break;
+      case 'tasks': renderTasks(); break;
+      case 'leaderboard': renderLeaderboard(); break;
+      case 'profile': renderProfile(); break;
+      default: renderHome(); break;
+    }
+  }
+
+  function renderHome() {
+    const recentHtml = (state.recentResults || []).slice(0,5).map(r => {
+      const ts = new Date(r.timestamp*1000).toLocaleString();
+      return `<div class="recent-row">${r.emoji} ${r.value} — ${r.points_awarded}pt — ${r.first_name||r.username||'User'} — <small>${ts}</small></div>`;
+    }).join('');
+    page.innerHTML = `
+      <div class="card user-card">
+        <img class="avatar" src="${state.user.photoUrl || 'https://i.pravatar.cc/48?img=' + state.user.id}" alt="Avatar">
+        <div class="user-info"><div class="name">${state.user.firstName}</div><div class="username">Level ${state.user.level}</div></div>
+      </div>
+      <div class="card balance-card">
+        <div class="balance-item"><div class="label">⭐ Points</div><div class="value">${state.user.points || 0}</div></div>
+        <div class="balance-item"><div class="label">🎁 Free chances</div><div class="value">${state.user.free_chances ?? 0}</div></div>
+      </div>
+      <div class="card"><h3>Recent Group Results</h3>${recentHtml || '<div class="muted">No results yet</div>'}</div>
+    `;
+  }
+
+  function renderGames() {
+    page.innerHTML = `<div style="padding:12px">${state.games.map(g=>`<div class="card"><strong>${g.icon} ${g.name}</strong></div>`).join('')}</div>`;
+  }
+  function renderTasks() {
+    page.innerHTML = `<div style="padding:12px"><h3>Daily Tasks (demo)</h3><ul>${state.tasks.map(t=>`<li>${t.icon} ${t.title} — +${t.reward}</li>`).join('')}</ul></div>`;
+  }
+  function renderLeaderboard() {
+    const html = (state.leaderboard || []).map(u => `<li>${u.username||u.first_name||'User'} — ${u.points} pts</li>`).join('');
+    page.innerHTML = `<div class="card"><h3>Leaderboard</h3><ol>${html || '<li class="muted">No leaderboard</li>'}</ol></div>`;
+  }
+  function renderProfile() {
+    page.innerHTML = `<div class="card"><h3>${state.user.firstName}</h3><p>User ID: ${state.user.id}</p><p>Points: ${state.user.points || 0}</p></div>`;
+  }
+
+  // Navigation
+  function attachNav() {
     navButtons.forEach(btn => {
       btn.addEventListener('click', () => {
-        const page = btn.getAttribute('data-page');
-        renderPage(page);
-        updateNavActive(page);
+        const p = btn.getAttribute('data-page');
+        renderPage(p);
+        navButtons.forEach(b => b.classList.toggle('active', b === btn));
       });
     });
   }
 
-  function updateNavActive(pageName) {
-    navButtons.forEach(btn => {
-      btn.classList.toggle('active', btn.getAttribute('data-page') === pageName);
-    });
-  }
-
-  // Page Rendering
-  function renderPage(pageName) {
-    state.currentPage = pageName;
-    page.innerHTML = '';
-    updateNavActive(pageName);
-
-    switch(pageName) {
-      case 'home':
-        renderHomePage();
-        break;
-      case 'games':
-        renderGamesPage();
-        break;
-      case 'tasks':
-        renderTasksPage();
-        break;
-      case 'leaderboard':
-        renderLeaderboardPage();
-        break;
-      case 'profile':
-        renderProfilePage();
-        break;
-    }
-  }
-
-  // HOME PAGE
-  function renderHomePage() {
-    const html = `
-      <div class="card user-card">
-        <img class="avatar" src="${state.user.photoUrl || 'https://i.pravatar.cc/48?img=' + state.user.id}" alt="Avatar">
-        <div class="user-info">
-          <div class="name">${state.user.firstName}</div>
-          <div class="username">Level ${state.user.level}</div>
-        </div>
-      </div>
-
-      <div class="card balance-card">
-        <div class="balance-item">
-          <div class="label">💰 Coins</div>
-          <div class="value">${state.user.coins.toLocaleString()}</div>
-        </div>
-        <div class="balance-item">
-          <div class="label">⭐ Points</div>
-          <div class="value">${state.user.points}</div>
-        </div>
-        <div class="balance-item">
-          <div class="label">🎁 Rewards</div>
-          <div class="value">${state.user.totalRewards}</div>
-        </div>
-      </div>
-
-      <div class="card games-card">
-        <h3>Quick Play</h3>
-        <div class="games-grid">
-          ${state.games.map(game => `
-            <button class="game-btn" onclick="window.playGame(${game.id})">
-              ${game.icon}<br>${game.name}
-            </button>
-          `).join('')}
-        </div>
-      </div>
-
-      <div class="card daily-card">
-        <div class="daily-left">
-          <div class="gift">🎁</div>
-          <div>
-            <div style="font-weight:700">Daily Bonus</div>
-            <div class="username">Tap for 50 coins</div>
-          </div>
-        </div>
-        <button class="btn primary" onclick="window.claimDaily()" style="margin:0">Claim</button>
-      </div>
-    `;
-    page.innerHTML = html;
-  }
-
-  // GAMES PAGE
-  function renderGamesPage() {
-    const html = `
-      <div style="padding: 12px 0">
-        <h2 style="margin: 0 12px 12px; font-size: 20px">Play & Earn</h2>
-        ${state.games.map(game => `
-          <div class="card" style="margin-bottom: 10px; cursor: pointer" onclick="window.playGame(${game.id})">
-            <div style="display: flex; align-items: center; justify-content: space-between">
-              <div style="display: flex; align-items: center; gap: 10px">
-                <span style="font-size: 24px">${game.icon}</span>
-                <div>
-                  <div style="font-weight: 700">${game.name}</div>
-                  <div class="username">+${game.points} points per win</div>
-                </div>
-              </div>
-              <span>→</span>
-            </div>
-          </div>
-        `).join('')}
-      </div>
-    `;
-    page.innerHTML = html;
-  }
-
-  // TASKS PAGE
-  function renderTasksPage() {
-    const html = `
-      <div style="padding: 12px 0">
-        <h2 style="margin: 0 12px 12px; font-size: 20px">Daily Tasks</h2>
-        <ul class="tasks-list">
-          ${state.tasks.map(task => `
-            <li class="task-item">
-              <div style="display: flex; align-items: center; gap: 10px; flex: 1">
-                <span style="font-size: 20px">${task.icon}</span>
-                <div style="flex: 1">
-                  <div class="task-title">${task.title}</div>
-                  <div class="task-meta">+${task.reward} coins</div>
-                </div>
-              </div>
-              <button class="btn ${task.completed ? 'warn' : 'primary'}" onclick="window.completeTask(${task.id})" style="padding: 6px 12px; font-size: 12px">
-                ${task.completed ? '✓' : 'Do'}
-              </button>
-            </li>
-          `).join('')}
-        </ul>
-      </div>
-    `;
-    page.innerHTML = html;
-  }
-
-  // LEADERBOARD PAGE
-  function renderLeaderboardPage() {
-    const html = `
-      <div style="padding: 12px 0">
-        <h2 style="margin: 0 12px 12px; font-size: 20px">🏆 Top Players</h2>
-        <ol class="leaderboard-list" style="padding: 12px">
-          ${state.leaderboard.map(entry => `
-            <li style="margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center">
-              <div>
-                <span style="font-size: 18px; margin-right: 8px">${entry.emoji}</span>
-                <strong>${entry.name}</strong>
-              </div>
-              <span style="color: var(--accent); font-weight: 700">${entry.score.toLocaleString()}</span>
-            </li>
-          `).join('')}
-        </ol>
-      </div>
-    `;
-    page.innerHTML = html;
-  }
-
-  // PROFILE PAGE
-  function renderProfilePage() {
-    const html = `
-      <div style="padding: 12px">
-        <div class="card" style="text-align: center; margin-bottom: 16px">
-          <img class="avatar big" src="${state.user.photoUrl || 'https://i.pravatar.cc/96?img=' + state.user.id}" alt="Avatar" style="margin-bottom: 12px">
-          <h2 style="margin: 0">${state.user.firstName}</h2>
-          <div class="username">User ID: ${state.user.id}</div>
-        </div>
-
-        <div class="card" style="margin-bottom: 12px">
-          <div style="font-weight: 700; margin-bottom: 8px">Statistics</div>
-          <div class="profile-stats">
-            <div>
-              <div class="username">Level</div>
-              <div style="font-weight: 700; font-size: 18px; color: var(--accent)">${state.user.level}</div>
-            </div>
-            <div>
-              <div class="username">Total Coins</div>
-              <div style="font-weight: 700; font-size: 18px; color: var(--accent)">${state.user.coins.toLocaleString()}</div>
-            </div>
-            <div>
-              <div class="username">Points</div>
-              <div style="font-weight: 700; font-size: 18px; color: var(--accent)">${state.user.points}</div>
-            </div>
-            <div>
-              <div class="username">Rewards</div>
-              <div style="font-weight: 700; font-size: 18px; color: var(--accent)">${state.user.totalRewards}</div>
-            </div>
-          </div>
-        </div>
-
-        <button class="btn primary" style="width: 100%" onclick="window.shareProfile()">📤 Share Profile</button>
-      </div>
-    `;
-    page.innerHTML = html;
-  }
-
-  // Game Actions
-  window.playGame = function(gameId) {
-    const game = state.games.find(g => g.id === gameId);
-    if (!game) return;
-    
-    showToast(`🎮 Playing ${game.name.split(' ')[1]}...`);
-    
-    // Simulate game result after 1.5 seconds
-    setTimeout(() => {
-      const won = Math.random() > 0.4;
-      if (won) {
-        state.user.coins += game.points;
-        state.user.points += Math.floor(game.points / 2);
-        showToast(`✅ Won ${game.points} coins!`);
-      } else {
-        showToast(`❌ Try again!`);
-      }
-    }, 1500);
+  // Demo simulation button (keeps fallback)
+  window.simulateLocalDice = function() {
+    const emojis = ['🎲','🎯','🏀','⚽','🎳','🎰'];
+    const emoji = emojis[Math.floor(Math.random()*emojis.length)];
+    const valueMap = {
+      '🎲': () => 1+Math.floor(Math.random()*6),
+      '🎯': () => 1+Math.floor(Math.random()*6),
+      '🏀': () => 1+Math.floor(Math.random()*5),
+      '⚽': () => 1+Math.floor(Math.random()*5),
+      '🎳': () => 1+Math.floor(Math.random()*6),
+      '🎰': () => (Math.random()<0.05?64:Math.floor(Math.random()*64))
+    };
+    const value = (valueMap[emoji]||(()=>1))();
+    const points = (emoji==='🎲' && value===6)?10 : (emoji==='🎯' && value===6)?15 : (emoji==='🏀' && value===5)?10 : (emoji==='⚽' && value===3)?10 : (emoji==='🎳' && value===6)?20 : (emoji==='🎰' && value===64)?50 : 1;
+    const entry = { emoji, value, points_awarded: points, first_name: state.user.firstName, timestamp: Math.floor(Date.now()/1000) };
+    const raw = JSON.parse(localStorage.getItem(DEMO_KEY) || '{}');
+    raw.recent = raw.recent || [];
+    raw.recent.unshift(entry);
+    raw.recent = raw.recent.slice(0,50);
+    raw.user = raw.user || state.user;
+    raw.user.points = (raw.user.points || 0) + points;
+    raw.leaderboard = raw.leaderboard || [];
+    raw.leaderboard.unshift({ first_name: raw.user.firstName || 'You', points: raw.user.points });
+    localStorage.setItem(DEMO_KEY, JSON.stringify(raw));
+    loadLocalDemo();
   };
 
-  window.claimDaily = function() {
-    state.user.coins += 50;
-    showToast('✅ Claimed 50 coins!');
-  };
-
-  window.completeTask = function(taskId) {
-    const task = state.tasks.find(t => t.id === taskId);
-    if (!task) return;
-    if (task.completed) return;
-    
-    task.completed = true;
-    state.user.coins += task.reward;
-    showToast(`✅ Task complete! +${task.reward} coins`);
-    renderTasksPage();
-  };
-
-  window.shareProfile = function() {
-    if (tg?.shareToChat) {
-      tg.shareToChat(`I'm playing HotWell! 🔥 Level ${state.user.level}, ${state.user.coins} coins. Join me! 🎮`);
-    } else {
-      showToast('Share feature available in Telegram');
-    }
-  };
-
-  // Toast Notifications
-  function showToast(message) {
-    toast.textContent = message;
-    toast.style.opacity = '1';
-    toast.style.visibility = 'visible';
-    
-    setTimeout(() => {
-      toast.style.opacity = '0';
-      toast.style.visibility = 'hidden';
-    }, 2000);
+  // Init
+  function init() {
+    updateUserShort();
+    attachNav();
+    renderPage('home');
+    initializeData(); // try backend -> fallback to demo
   }
 
-  // Initialize when DOM is ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+
 })();
