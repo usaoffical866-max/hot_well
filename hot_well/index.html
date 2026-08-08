@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <title>HotWell — Telegram Mini App (Demo)</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div id="app" class="app">
+    <header class="topbar">
+      <div class="brand">HOTWELL</div>
+      <div id="userShort" class="user-short"></div>
+    </header>
+
+    <main id="page" class="page">
+      <!-- Pages rendered by app.js -->
+    </main>
+
+    <nav class="bottom-nav" role="navigation">
+      <button class="nav-btn active" data-page="home">Home</button>
+      <button class="nav-btn" data-page="games">Games</button>
+      <button class="nav-btn" data-page="tasks">Tasks</button>
+      <button class="nav-btn" data-page="leaderboard">Leaderboard</button>
+      <button class="nav-btn" data-page="profile">Profile</button>
+    </nav>
+
+    <!-- Toast / overlay -->
+    <div id="toast" class="toast" aria-live="polite"></div>
+  </div>
+
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <script src="./app.js"></script>
+</body>
+</html>
