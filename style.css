@@ -1,0 +1,69 @@
+/* style.css — HOTWELL Telegram Mini App */
+:root{
+  --bg:#0b0d10;
+  --card:#0f1418;
+  --muted:#9aa3ad;
+  --accent:#ffb454;
+  --accent-2:#ff6b6b;
+  --glass: rgba(255,255,255,0.03);
+  --radius:16px;
+  --shadow: 0 6px 18px rgba(2,6,12,0.6);
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0;font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial;
+  background:linear-gradient(180deg,#050607 0%, #0b0d10 100%);
+  color:#e6eef6;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+  -webkit-tap-highlight-color:transparent;
+}
+.app{display:flex;flex-direction:column;height:100vh;max-width:480px;margin:0 auto;border-left:1px solid rgba(255,255,255,0.02);border-right:1px solid rgba(255,255,255,0.02)}
+.app-header{padding:14px 16px;display:flex;align-items:center;justify-content:space-between}
+.brand{display:flex;gap:12px;align-items:center}
+.logo{font-size:28px}
+.brand h1{margin:0;font-size:18px;letter-spacing:1px}
+.tag{margin:0;color:var(--muted);font-size:12px}
+.demo-badge{background:linear-gradient(90deg,var(--accent),var(--accent-2));color:#081019;padding:6px 10px;border-radius:999px;font-weight:600;font-size:12px}
+.main{padding:12px;overflow:auto;flex:1}
+.card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));padding:12px;border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:12px}
+.user-card{display:flex;align-items:center;gap:12px}
+.avatar{width:48px;height:48px;border-radius:12px;object-fit:cover;border:2px solid rgba(255,255,255,0.04)}
+.avatar.big{width:96px;height:96px;border-radius:18px}
+.user-info .name{font-weight:700}
+.username{color:var(--muted);font-size:13px}
+.balance-card{display:flex;justify-content:space-between;gap:8px;padding:10px}
+.balance-item{flex:1;text-align:center}
+.balance-item .label{color:var(--muted);font-size:13px}
+.balance-item .value{font-weight:800;font-size:20px;margin-top:6px}
+.games-card h3{margin:0 0 8px 0}
+.games-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+.game-btn{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border:1px solid rgba(255,255,255,0.02);padding:14px;border-radius:12px;font-size:16px}
+.game-btn:active{transform:translateY(1px)}
+.daily-card{display:flex;align-items:center;justify-content:space-between}
+.daily-left{display:flex;gap:12px;align-items:center}
+.gift{font-size:28px}
+.btn{padding:12px 16px;border-radius:12px;border:0;background:rgba(255,255,255,0.03);color:#fff;font-weight:700}
+.btn.primary{background:linear-gradient(90deg,var(--accent),var(--accent-2));color:#081019}
+.btn.spin{display:block;margin:12px auto;padding:14px 20px;font-size:16px;border-radius:999px}
+.btn.warn{background:#262626}
+.result{margin-top:10px;color:var(--accent);font-weight:800;text-align:center}
+.game-card h2{margin:0 0 10px 0}
+.slot-machine{display:flex;justify-content:center;gap:10px;margin:10px 0}
+.reel{width:72px;height:72px;border-radius:12px;background:var(--glass);display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:900;border:1px solid rgba(255,255,255,0.03)}
+.slot-info{color:var(--muted);text-align:center}
+.big-result{text-align:center;font-size:28px;font-weight:900;padding:24px 0}
+.dart-canvas{width:100%;height:auto;border-radius:12px;background:linear-gradient(180deg,#0e1114,#0b0d10);display:block}
+.dart-stats{margin-top:8px;color:var(--muted)}
+.dice-face{font-size:48px;text-align:center;padding:20px}
+.tasks-list{list-style:none;padding:0;margin:0}
+.task-item{display:flex;align-items:center;justify-content:space-between;padding:10px;border-radius:10px;margin-bottom:8px;background:rgba(255,255,255,0.01)}
+.task-title{font-weight:700}
+.task-meta{color:var(--muted);font-size:13px}
+.leaderboard-list{padding-left:18px}
+.profile-stats{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin-top:12px;color:var(--muted)}
+.bottom-nav{display:flex;justify-content:space-around;padding:8px 6px;border-top:1px solid rgba(255,255,255,0.02);background:linear-gradient(180deg, rgba(255,255,255,0.01), transparent)}
+.nav-btn{background:transparent;border:0;padding:8px 12px;font-size:18px}
+.nav-btn.active{color:var(--accent)}
+.overlay{position:fixed;inset:0;background:rgba(2,6,12,0.6);display:flex;align-items:flex-end}
+.hub-sheet{background:linear-gradient(180deg,#0f1418,#0b0d10);width:100%;padding:16px;border-top-left-radius:18px;border-top-right-radius:18px}
+@media(min-width:520px){.main{padding:20px}.card{padding:18px}}
