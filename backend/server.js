@@ -7,6 +7,9 @@
  *   PORT (optional)             - server port (default 3000)
  *   DB_PATH (optional)          - DB path (default ./backend/hotwell.db)
  *
+ * For local development/testing only:
+ *   HOTWELL_DEV=1               - run in dev mode without BOT_TOKEN/WEBHOOK_SECRET validation
+ *
  * Endpoints:
  *   POST /telegram/webhook
  *   GET  /api/me?initData=<urlencoded initData>
@@ -14,8 +17,8 @@
  *   GET  /api/leaderboard
  *
  * Security:
- *   - Validates Telegram WebApp initData server-side using BOT_TOKEN
- *   - Validates webhook secret via header x-telegram-bot-api-secret-token or x-webhook-secret
+ *   - Validates Telegram WebApp initData server-side using BOT_TOKEN (unless HOTWELL_DEV=1)
+ *   - Validates webhook secret via header x-telegram-bot-api-secret-token or x-webhook-secret (unless HOTWELL_DEV=1)
  *   - Prevents duplicate update_id processing via unique constraint
  *   - No secrets in source code
  */
@@ -32,14 +35,19 @@ const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 const PORT = process.env.PORT || 3000;
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'hotwell.db');
 const SCHEMA_PATH = path.join(__dirname, 'schema.sql');
+const DEV_MODE = process.env.HOTWELL_DEV === '1' || process.env.NODE_ENV === 'development';
 
-if (!BOT_TOKEN) {
-  console.error('Missing BOT_TOKEN env variable. Abort.');
+if (!BOT_TOKEN && !DEV_MODE) {
+  console.error('Missing BOT_TOKEN env variable. Abort. (set HOTWELL_DEV=1 for local dev)');
   process.exit(1);
 }
-if (!WEBHOOK_SECRET) {
-  console.error('Missing WEBHOOK_SECRET env variable. Abort.');
+if (!WEBHOOK_SECRET && !DEV_MODE) {
+  console.error('Missing WEBHOOK_SECRET env variable. Abort. (set HOTWELL_DEV=1 for local dev)');
   process.exit(1);
+}
+
+if (DEV_MODE) {
+  console.warn('HOTWELL running in DEV MODE: initData and webhook secret validation are relaxed. Do NOT use in production.');
 }
 
 // Ensure DB dir exists
@@ -79,6 +87,7 @@ app.use(bodyParser.json());
 
 // Helper: check webhook secret header
 function checkWebhookSecret(req) {
+  if (DEV_MODE) return true;
   const h1 = (req.get('x-telegram-bot-api-secret-token') || '').toString();
   const h2 = (req.get('x-webhook-secret') || '').toString();
   if (h1 && h1 === WEBHOOK_SECRET) return true;
@@ -88,14 +97,12 @@ function checkWebhookSecret(req) {
 
 // Helper: verify Telegram WebApp initData per Telegram docs
 function verifyInitData(initData) {
-  // initData expected as a query string like "user=%7B...%7D&hash=..."
+  if (DEV_MODE) return true;
   if (!initData || typeof initData !== 'string') return false;
-  // Use URLSearchParams to parse
   const params = new URLSearchParams(initData);
   const hash = params.get('hash');
   if (!hash) return false;
 
-  // Build data_check_string from params except hash, sorted by key
   const entries = [];
   for (const key of Array.from(params.keys()).sort()) {
     if (key === 'hash') continue;
@@ -106,10 +113,8 @@ function verifyInitData(initData) {
 
   // secret_key = sha256(BOT_TOKEN)
   const secretKey = crypto.createHash('sha256').update(BOT_TOKEN).digest();
-  // hmac = HMAC-SHA256(secret_key, data_check_string)
   const hmac = crypto.createHmac('sha256', secretKey).update(data_check_string).digest('hex');
 
-  // Compare in constant time
   try {
     return crypto.timingSafeEqual(Buffer.from(hmac, 'hex'), Buffer.from(hash, 'hex'));
   } catch (e) {
@@ -122,13 +127,8 @@ function parseInitDataUser(initData) {
   const params = new URLSearchParams(initData);
   const userRaw = params.get('user');
   if (userRaw) {
-    try {
-      return JSON.parse(userRaw);
-    } catch (e) {
-      // fallthrough
-    }
+    try { return JSON.parse(userRaw); } catch (e) {}
   }
-  // Some clients send user fields separately
   const user = {};
   if (params.get('user.id')) user.id = Number(params.get('user.id'));
   if (params.get('user.first_name')) user.first_name = params.get('user.first_name');
