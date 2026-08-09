@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 /**
  * HOTWELL backend - Express + SQLite
  *
@@ -277,4 +278,215 @@ app.post('/telegram/webhook', (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`HOTWELL backend listening on port ${PORT}`);
+=======
+const express = require("express");
+const Database = require("better-sqlite3");
+const crypto = require("crypto");
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+const BOT_TOKEN = process.env.BOT_TOKEN || "";
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
+
+app.use(express.json({ limit: "1mb" }));
+
+const db = new Database("hotwell.db");
+db.pragma("journal_mode = WAL");
+
+db.exec(`
+CREATE TABLE IF NOT EXISTS users (
+  user_id TEXT PRIMARY KEY,
+  username TEXT,
+  first_name TEXT,
+  points INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS results (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  update_id INTEGER UNIQUE,
+  user_id TEXT NOT NULL,
+  chat_id TEXT,
+  emoji TEXT NOT NULL,
+  value INTEGER NOT NULL,
+  points INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+`);
+
+const games = {
+  "🎲": "Dice",
+  "🎯": "Darts",
+  "🏀": "Basketball",
+  "⚽": "Football",
+  "🎳": "Bowling",
+  "🎰": "Slots"
+};
+
+function validateInitData(initData) {
+  if (!BOT_TOKEN || !initData) return false;
+
+  const params = new URLSearchParams(initData);
+  const hash = params.get("hash");
+  if (!hash) return false;
+
+  params.delete("hash");
+
+  const dataCheckString = [...params.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([key, value]) => `${key}=${value}`)
+    .join("\n");
+
+  const secretKey = crypto
+    .createHmac("sha256", "WebAppData")
+    .update(BOT_TOKEN)
+    .digest();
+
+  const calculated = crypto
+    .createHmac("sha256", secretKey)
+    .update(dataCheckString)
+    .digest("hex");
+
+  return crypto.timingSafeEqual(
+    Buffer.from(calculated),
+    Buffer.from(hash)
+  );
+}
+
+function pointsFor(emoji, value) {
+  // Free virtual points only.
+  if (emoji === "🎰") return value === 64 ? 100 : 10;
+  if (emoji === "🎯") return value === 6 ? 50 : value * 3;
+  if (emoji === "🏀") return value >= 4 ? 40 : 10;
+  if (emoji === "⚽") return value >= 4 ? 40 : 10;
+  if (emoji === "🎳") return value === 6 ? 50 : value * 4;
+  return value * 5;
+}
+
+app.get("/", (_req, res) => {
+  res.json({
+    name: "HOT WELL",
+    status: "online",
+    games: Object.values(games)
+  });
+});
+
+app.get("/api/games", (_req, res) => {
+  res.json({ games });
+});
+
+app.get("/api/me", (req, res) => {
+  const initData = req.headers["x-telegram-init-data"] || "";
+
+  if (!validateInitData(initData)) {
+    return res.status(401).json({ error: "Invalid Telegram WebApp data" });
+  }
+
+  const params = new URLSearchParams(initData);
+  const user = JSON.parse(params.get("user") || "{}");
+
+  const row = db.prepare("SELECT * FROM users WHERE user_id = ?")
+    .get(String(user.id));
+
+  res.json(row || {
+    user_id: String(user.id),
+    username: user.username || "",
+    first_name: user.first_name || "",
+    points: 0
+  });
+});
+
+app.get("/api/results", (req, res) => {
+  const limit = Math.min(Number(req.query.limit) || 20, 100);
+
+  const rows = db.prepare(`
+    SELECT * FROM results
+    ORDER BY id DESC
+    LIMIT ?
+  `).all(limit);
+
+  res.json(rows);
+});
+
+app.get("/api/leaderboard", (_req, res) => {
+  const rows = db.prepare(`
+    SELECT user_id, username, first_name, points
+    FROM users
+    ORDER BY points DESC
+    LIMIT 50
+  `).all();
+
+  res.json(rows);
+});
+
+app.post("/telegram/webhook", (req, res) => {
+  const secret =
+    req.headers["x-telegram-bot-api-secret-token"] ||
+    req.headers["x-webhook-secret"];
+
+  if (!WEBHOOK_SECRET || secret !== WEBHOOK_SECRET) {
+    return res.status(401).json({ error: "Invalid webhook secret" });
+  }
+
+  const update = req.body;
+  const message = update.message;
+
+  if (!message || !message.dice) {
+    return res.json({ ok: true, ignored: true });
+  }
+
+  if (message.from?.is_bot) {
+    return res.json({ ok: true, ignored: true });
+  }
+
+  const emoji = message.dice.emoji;
+  const value = Number(message.dice.value);
+
+  if (!games[emoji]) {
+    return res.json({ ok: true, ignored: true });
+  }
+
+  const userId = String(message.from.id);
+  const username = message.from.username || "";
+  const firstName = message.from.first_name || "";
+  const chatId = String(message.chat?.id || "");
+  const points = pointsFor(emoji, value);
+
+  const insert = db.transaction(() => {
+    db.prepare(`
+      INSERT OR IGNORE INTO users
+      (user_id, username, first_name)
+      VALUES (?, ?, ?)
+    `).run(userId, username, firstName);
+
+    const result = db.prepare(`
+      INSERT OR IGNORE INTO results
+      (update_id, user_id, chat_id, emoji, value, points)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(
+      Number(update.update_id),
+      userId,
+      chatId,
+      emoji,
+      value,
+      points
+    );
+
+    if (result.changes > 0) {
+      db.prepare(`
+        UPDATE users
+        SET points = points + ?, username = ?, first_name = ?
+        WHERE user_id = ?
+      `).run(points, username, firstName, userId);
+    }
+
+    return result.changes;
+  })();
+
+  res.json({ ok: true, stored: insert > 0, points });
+});
+
+app.listen(PORT, () => {
+  console.log(`HOT WELL backend running on port ${PORT}`);
+>>>>>>> 0f95f85 (Add HOT WELL Telegram backend)
 });
