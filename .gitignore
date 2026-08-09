@@ -1,2 +1,2 @@
-backend/hotwell.db
-backend/*.db
+/backend/hotwell.db
+/backend/hotwell.json

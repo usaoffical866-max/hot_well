@@ -1,39 +1,29 @@
-/**
- * HOTWELL backend - Express + SQLite
- *
- * Environment variables:
- *   BOT_TOKEN (required)        - Telegram bot token (never commit to repo)
- *   WEBHOOK_SECRET (required)   - secret used for setWebhook secret_token
- *   PORT (optional)             - server port (default 3000)
- *   DB_PATH (optional)          - DB path (default ./backend/hotwell.db)
- *
- * For local development/testing only:
- *   HOTWELL_DEV=1               - run in dev mode without BOT_TOKEN/WEBHOOK_SECRET validation
- *
- * Endpoints:
- *   POST /telegram/webhook
- *   GET  /api/me?initData=<urlencoded initData>
- *   GET  /api/results
- *   GET  /api/leaderboard
- *
- * Security:
- *   - Validates Telegram WebApp initData server-side using BOT_TOKEN (unless HOTWELL_DEV=1)
- *   - Validates webhook secret via header x-telegram-bot-api-secret-token or x-webhook-secret (unless HOTWELL_DEV=1)
- *   - Prevents duplicate update_id processing via unique constraint
- *   - No secrets in source code
- */
+/*
+  HOTWELL backend - Express + JSON file storage (Render-compatible)
+
+  Environment variables:
+    BOT_TOKEN (required)        - Telegram bot token (never commit to repo)
+    WEBHOOK_SECRET (required)   - secret used for setWebhook secret_token
+    PORT (optional)             - server port (default 3000)
+    DB_PATH (optional)          - DB path (default ./backend/hotwell.json)
+    HOTWELL_DEV=1               - run in dev mode without BOT_TOKEN/WEBHOOK_SECRET validation
+
+  Notes:
+    - Uses a plain JSON file for storage (no native binaries or compiled modules).
+    - Keeps same API and validation behavior as original implementation.
+*/
 
 const express = require('express');
 const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const Database = require('better-sqlite3');
+const createDB = require('./db');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET;
 const PORT = process.env.PORT || 3000;
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'hotwell.db');
+const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'hotwell.json');
 const SCHEMA_PATH = path.join(__dirname, 'schema.sql');
 const DEV_MODE = process.env.HOTWELL_DEV === '1' || process.env.NODE_ENV === 'development';
 
@@ -54,32 +44,22 @@ if (DEV_MODE) {
 const dbDir = path.dirname(DB_PATH);
 if (!fs.existsSync(dbDir)) fs.mkdirSync(dbDir, { recursive: true });
 
-// Initialize DB and schema
-const db = new Database(DB_PATH);
+// Initialize JSON DB
+const db = createDB(DB_PATH);
+
+// If schema.sql exists, we keep it for reference but it's not used anymore.
 if (!fs.existsSync(SCHEMA_PATH)) {
-  console.error('schema.sql missing in backend/ - create backend/schema.sql with required schema.');
-  process.exit(1);
+  console.warn('schema.sql missing in backend/ - schema.sql is optional with JSON DB.');
 }
-const schemaSQL = fs.readFileSync(SCHEMA_PATH, 'utf8');
-db.exec(schemaSQL);
 
-// Prepared statements
-const getUserByTelegramId = db.prepare('SELECT * FROM users WHERE telegram_id = ?');
-const insertUser = db.prepare('INSERT INTO users (telegram_id, username, first_name, last_name, points, free_chances, last_daily) VALUES (?, ?, ?, ?, ?, ?, ?)');
-const upsertUser = db.prepare(`
-  INSERT INTO users (telegram_id, username, first_name, last_name, points, free_chances, last_daily)
-  VALUES (?, ?, ?, ?, ?, ?, ?)
-  ON CONFLICT(telegram_id) DO UPDATE SET username=excluded.username, first_name=excluded.first_name, last_name=excluded.last_name
-`);
-const updateUserPoints = db.prepare('UPDATE users SET points = points + ? WHERE telegram_id = ?');
-
-const insertResult = db.prepare(`
-  INSERT INTO results (update_id, user_telegram_id, chat_id, emoji, value, points_awarded, timestamp, username, first_name)
-  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-`);
-
-const recentResults = db.prepare('SELECT * FROM results ORDER BY timestamp DESC LIMIT 50');
-const leaderboardQuery = db.prepare('SELECT telegram_id, username, first_name, points FROM users ORDER BY points DESC LIMIT 50');
+// Helper functions mapped from previous prepared statements
+function getUserByTelegramId(id) { return db.getUserByTelegramId(id); }
+function insertUser(telegram_id, username, first_name, last_name, points, free_chances, last_daily) { return db.insertUser(telegram_id, username, first_name, last_name, points, free_chances, last_daily); }
+function upsertUser(telegram_id, username, first_name, last_name, points, free_chances, last_daily) { return db.upsertUser(telegram_id, username, first_name, last_name, points, free_chances, last_daily); }
+function updateUserPoints(points, telegram_id) { return db.updateUserPoints(points, telegram_id); }
+function insertResult(update_id, user_telegram_id, chat_id, emoji, value, points_awarded, timestamp, username, first_name) { return db.insertResult(update_id, user_telegram_id, chat_id, emoji, value, points_awarded, timestamp, username, first_name); }
+function recentResults() { return db.recentResults(50); }
+function leaderboardQuery() { return db.leaderboardQuery(50); }
 
 // Express app
 const app = express();
@@ -172,13 +152,17 @@ app.get('/api/me', (req, res) => {
   if (!user || !user.id) return res.status(400).json({ ok: false, error: 'user id missing' });
 
   // Upsert user
-  upsertUser.run(user.id, user.username || null, user.first_name || null, user.last_name || null, 0, 3, null);
+  try {
+    upsertUser(user.id, user.username || null, user.first_name || null, user.last_name || null, 0, 3, null);
+  } catch (e) {
+    console.warn('Upsert user warning', e && e.message);
+  }
 
-  const dbUser = getUserByTelegramId.get(user.id);
-  const results = recentResults.all().map(r => ({
+  const dbUser = getUserByTelegramId(user.id);
+  const results = recentResults().map(r => ({
     id: r.id, emoji: r.emoji, value: r.value, points_awarded: r.points_awarded, timestamp: r.timestamp, username: r.username, first_name: r.first_name
   }));
-  const leaderboard = leaderboardQuery.all();
+  const leaderboard = leaderboardQuery();
 
   return res.json({ ok: true, user: dbUser, recent: results, leaderboard });
 });
@@ -188,7 +172,7 @@ app.get('/api/me', (req, res) => {
  * Returns recent results
  */
 app.get('/api/results', (req, res) => {
-  const rows = recentResults.all();
+  const rows = recentResults();
   return res.json({ ok: true, results: rows });
 });
 
@@ -196,7 +180,7 @@ app.get('/api/results', (req, res) => {
  * GET /api/leaderboard
  */
 app.get('/api/leaderboard', (req, res) => {
-  const rows = leaderboardQuery.all();
+  const rows = leaderboardQuery();
   return res.json({ ok: true, leaderboard: rows });
 });
 
@@ -241,31 +225,25 @@ app.post('/telegram/webhook', (req, res) => {
   // Award points per rules
   const points = awardPointsFor(emoji, value);
 
-  // Insert result and update user within transaction
-  const tx = db.transaction(() => {
+  // Insert result and update user with simple atomic-like operations
+  try {
     try {
-      insertResult.run(update_id, message.from.id, message.chat.id, emoji, value, points, Math.floor(Date.now() / 1000), message.from.username || null, message.from.first_name || null);
+      insertResult(update_id, message.from.id, message.chat.id, emoji, value, points, Math.floor(Date.now() / 1000), message.from.username || null, message.from.first_name || null);
     } catch (err) {
-      // If duplicate update_id => ignore
-      if (err && err.code === 'SQLITE_CONSTRAINT') {
-        // duplicate or other constraint: ignore duplicate update_id
+      if (err && err.code === 'DUPLICATE') {
         console.warn('Duplicate update_id or constraint error, ignoring:', update_id);
-        return;
+        return res.status(200).json({ ok: true, ignored: true });
       }
       throw err;
     }
 
     // Ensure user exists
-    const u = getUserByTelegramId.get(message.from.id);
+    const u = getUserByTelegramId(message.from.id);
     if (!u) {
-      insertUser.run(message.from.id, message.from.username || null, message.from.first_name || null, message.from.last_name || null, 0, 3, null);
+      insertUser(message.from.id, message.from.username || null, message.from.first_name || null, message.from.last_name || null, 0, 3, null);
     }
     // Update points
-    updateUserPoints.run(points, message.from.id);
-  });
-
-  try {
-    tx();
+    updateUserPoints(points, message.from.id);
   } catch (e) {
     console.error('Error processing webhook transaction', e);
     return res.status(500).send('error');

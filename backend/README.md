@@ -1,7 +1,7 @@
-HOTWELL backend (Telegram webhook + API)
+# HOTWELL backend (Telegram webhook + API)
 
 Overview
-- Node.js + Express + SQLite backend to process Telegram dice updates and maintain virtual points.
+- Node.js + Express backend to process Telegram dice updates and maintain virtual points.
 - Endpoints:
   - POST /telegram/webhook
   - GET /api/me?initData=<urlencoded initData>
@@ -17,9 +17,9 @@ Requirements & Security
 
 Setup
 1. Ensure files exist:
-   - backend/package.json (already created)
-   - backend/server.js (already created)
-   - backend/schema.sql
+   - backend/package.json
+   - backend/server.js
+   - backend/schema.sql (optional reference)
    - backend/README.md
 
 2. Install dependencies:
@@ -29,23 +29,24 @@ Setup
 3. Run server:
    BOT_TOKEN="your_bot_token_here" WEBHOOK_SECRET="a_strong_secret" npm start
 
-Database
-- The server will create a SQLite DB file at backend/hotwell.db (or DB_PATH if provided).
-- schema.sql defines users and results tables.
+Database (changed)
+- This backend no longer uses SQLite or any native compiled binaries.
+- It uses a simple JSON file for storage by default at backend/hotwell.json (or path set by DB_PATH env var).
+- The JSON file structure contains users and results arrays and is safe for single-process use such as on Render.
+- For production or multi-instance deployments use an external managed database (Postgres, Redis, etc.).
 
-Set Telegram webhook
-- Example:
-  curl -s -X POST "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook" \
-    -F url="https://your-domain.example/telegram/webhook" \
-    -F secret_token="${WEBHOOK_SECRET}"
+Render Deployment Notes
+- Render environments do not support building native Node bindings by default (GLIBC issues). This project avoids native binaries by using a JSON file store.
+- Ensure your service has writable disk (Render's ephemeral disk works for single-instance apps; for durability use an external DB).
+- Set the following environment variables on Render:
+  - BOT_TOKEN: your Telegram bot token
+  - WEBHOOK_SECRET: secret used for Telegram setWebhook secret_token
+  - PORT: optional
+  - DB_PATH: optional path to JSON DB file (e.g., /tmp/hotwell.json or ./backend/hotwell.json)
+- Do NOT put secrets in the repository.
 
 Testing
 - Send animated dice in the configured Telegram group: 🎲 🎯 🏀 ⚽ 🎳 🎰
-- Verify POST /telegram/webhook receives update (use ngrok or similar for local testing).
+- Verify POST /telegram/webhook receives update (use a public URL or Render domain).
 - Check GET /api/results and GET /api/leaderboard to confirm stored data.
 - For Mini App calls, GET /api/me expects initData URL-encoded and validates it server-side.
-
-Notes
-- The backend uses update_id as unique to prevent awarding points twice for the same update.
-- The server validates numeric dice values and enforces reasonable ranges.
-- BOT_TOKEN must never appear in frontend JS or repository files.
