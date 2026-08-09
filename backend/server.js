@@ -14,7 +14,6 @@
 */
 
 const express = require('express');
-const bodyParser = require('body-parser');
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
@@ -63,7 +62,7 @@ function leaderboardQuery() { return db.leaderboardQuery(50); }
 
 // Express app
 const app = express();
-app.use(bodyParser.json());
+app.use(express.json());
 
 // Helper: check webhook secret header
 function checkWebhookSecret(req) {
